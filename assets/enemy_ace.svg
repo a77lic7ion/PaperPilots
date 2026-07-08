@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-32 -32 64 64">
+  <!-- Ace Fighter — Paper Planes: Origami Elite. Anchor = flight center (0,0), nose up. -->
+  <defs><clipPath id="body"><path d="M 0 -24 L 4 -10 L 22 8 L 18 12 L 3 8 L 0 18 L -3 8 L -18 12 L -22 8 L -4 -10 Z"/></clipPath></defs>
+  <path d="M 0 -24 L 4 -10 L 22 8 L 18 12 L 3 8 L 0 18 L -3 8 L -18 12 L -22 8 L -4 -10 Z" fill="#FDD835" stroke="#F57F17" stroke-width="1.5" stroke-linejoin="round"/>
+  <g clip-path="url(#body)">
+    <rect x="0" y="-32" width="32" height="64" fill="rgba(0,0,0,0.14)"/>
+    <line x1="0" y1="-24" x2="0" y2="24" stroke="rgba(255,255,255,0.55)" stroke-width="1.4"/>
+    <line x1="0" y1="-6" x2="-18" y2="12" stroke="rgba(0,0,0,0.22)" stroke-width="1"/>
+    <line x1="0" y1="-6" x2="18" y2="12" stroke="rgba(0,0,0,0.22)" stroke-width="1"/>
+  </g>
+</svg>
