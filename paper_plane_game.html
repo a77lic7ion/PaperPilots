@@ -5226,11 +5226,12 @@ function syncSelectionUI() {
 
         let touchInsideCanvas = false;
         window.addEventListener('touchstart', (e) => {
-            if (!canvas) return;
-            const rect = canvas.getBoundingClientRect();
+            if (!canvas) { touchInsideCanvas = false; return; }
             const t = e.touches[0];
             if (!t) { touchInsideCanvas = false; return; }
-            touchInsideCanvas = (t.clientX >= rect.left && t.clientX <= rect.right && t.clientY >= rect.top && t.clientY <= rect.bottom);
+            // Determine the actual element under the touch and see if it's inside the canvas
+            const el = document.elementFromPoint(t.clientX, t.clientY);
+            touchInsideCanvas = !!(el && (el === canvas || canvas.contains(el)));
         }, { passive: true });
 
         window.addEventListener('touchend', () => { touchInsideCanvas = false; });
