@@ -5225,8 +5225,8 @@ function syncSelectionUI() {
         const TOUCH_Y_OFFSET = -90;
 
         window.addEventListener('touchmove', (e) => {
+            if (gameState !== 'playing' || !player) return;
             e.preventDefault();
-            if (!player) return; // D1 fix
             const rect = canvas.getBoundingClientRect();
             player.targetX = e.touches[0].clientX - rect.left;
             player.targetY = e.touches[0].clientY + TOUCH_Y_OFFSET;
