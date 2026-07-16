@@ -5224,8 +5224,20 @@ function syncSelectionUI() {
         window.addEventListener('contextmenu', (e) => { if (gameState === 'playing') { e.preventDefault(); activateBomb(); } });
         const TOUCH_Y_OFFSET = -90;
 
+        let touchInsideCanvas = false;
+        window.addEventListener('touchstart', (e) => {
+            if (!canvas) return;
+            const rect = canvas.getBoundingClientRect();
+            const t = e.touches[0];
+            if (!t) { touchInsideCanvas = false; return; }
+            touchInsideCanvas = (t.clientX >= rect.left && t.clientX <= rect.right && t.clientY >= rect.top && t.clientY <= rect.bottom);
+        }, { passive: true });
+
+        window.addEventListener('touchend', () => { touchInsideCanvas = false; });
+        window.addEventListener('touchcancel', () => { touchInsideCanvas = false; });
+
         window.addEventListener('touchmove', (e) => {
-            if (gameState !== 'playing' || !player) return;
+            if (gameState !== 'playing' || !player || !touchInsideCanvas) return;
             e.preventDefault();
             const rect = canvas.getBoundingClientRect();
             player.targetX = e.touches[0].clientX - rect.left;
