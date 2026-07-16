@@ -14,8 +14,11 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             user-select: none;
             /* touch-action set per-element: none on canvas, auto on scrollable screens */
+            height: 100%;
         }
-        /* Game wrapper — constrains everything to the 9:16 box */
+        html {
+            height: 100%;
+        }
         #game-wrapper {
             position: fixed; top: 0; left: 0;
             overflow: hidden;
@@ -577,12 +580,20 @@
             background: var(--af-bg) !important;
             color: var(--af-text);
             font-family: var(--af-font-body);
+            display: flex;
+            flex-direction: column;
             justify-content: flex-start;
             text-align: left;
-            overflow-y: auto; overflow-x: hidden;
+            overflow: hidden;
+            height: 100%;
+        }
+        .screen .af-main,
+        .screen .af-center {
+            flex: 1 1 auto;
+            overflow-y: auto;
+            overflow-x: hidden;
             -webkit-overflow-scrolling: touch;
-            touch-action: pan-y;
-            overscroll-behavior: contain;
+            min-height: 0;
         }
         #start-screen, #shop-screen, #settings-screen, #game-over-screen, #wave-upgrade-screen, #pause-screen { background: var(--af-bg); }
 
