@@ -109,6 +109,15 @@ try {
     }
   `);
   runCode(context);
+  context.Enemy = context.Enemy || context.window.Enemy;
+  context.setCurrentRoundForTesting = context.window.setCurrentRoundForTesting;
+  context.setCurrentWaveForTesting = context.window.setCurrentWaveForTesting;
+  context.setBossForTesting = context.window.setBossForTesting;
+  context.Bullet = context.Bullet || context.window.Bullet;
+  context.applyBackdoorCheatForTesting = context.window.applyBackdoorCheatForTesting || context.applyBackdoorCheatForTesting;
+  context.getUnlockedClassesForTesting = context.window.getUnlockedClassesForTesting;
+  context.getScrapbookShipsForTesting = context.window.getScrapbookShipsForTesting;
+  context.getUpgradesForTesting = context.window.getUpgradesForTesting;
 } catch (e) {
   console.error("Error evaluating game code in test sandbox:", e);
   console.error(e.stack);
@@ -183,6 +192,67 @@ setTimeout(() => {
     console.log("  => Test 3 PASSED!");
   } else {
     console.error("  => Test 3 FAILED! Expected 220, got:", maxHpRound1);
+    process.exit(1);
+  }
+
+  // Test 4: Enemy hp scaling at Round 4+ Wave 9+
+  console.log("Test 4: Enemy HP scaling at Round 4+ Wave 9+...");
+  // Low round, low wave:
+  context.setCurrentRoundForTesting(3);
+  context.setCurrentWaveForTesting(8);
+  const enemyNormal = new context.Enemy(0, 0, 'scout');
+  const normalHp = enemyNormal.hp;
+  console.log(`  Round 3 Wave 8 Scout hp: ${normalHp}`);
+
+  // High round, high wave:
+  context.setCurrentRoundForTesting(4);
+  context.setCurrentWaveForTesting(9);
+  const enemyScaled = new context.Enemy(0, 0, 'scout');
+  const scaledHp = enemyScaled.hp;
+  console.log(`  Round 4 Wave 9 Scout hp: ${scaledHp}`);
+
+  if (scaledHp > normalHp) {
+    console.log("  => Test 4 PASSED! HP is scaled up at Round 4+ Wave 9+.");
+  } else {
+    console.error("  => Test 4 FAILED! HP is NOT scaled up at Round 4+ Wave 9+.");
+    process.exit(1);
+  }
+
+  // Test 5: Boss Bullet Balancing (slower speed, isBossBullet property)
+  console.log("Test 5: Boss Bullet Balancing...");
+  // Non-boss context:
+  context.setBossForTesting(null);
+  const normalBullet = new context.Bullet(0, 0, 0, false, 1, { speed: 10 });
+  console.log(`  Normal bullet speed (vx): ${normalBullet.vx}, isBossBullet: ${normalBullet.isBossBullet}`);
+
+  // Active boss context:
+  context.setBossForTesting({ x: 300, y: 150 });
+  const bossBullet = new context.Bullet(0, 0, 0, false, 1, { speed: 10 });
+  console.log(`  Boss bullet speed (vx): ${bossBullet.vx}, isBossBullet: ${bossBullet.isBossBullet}`);
+
+  if (bossBullet.isBossBullet && bossBullet.vx < normalBullet.vx) {
+    console.log("  => Test 5 PASSED! Boss bullets are correctly identified and slowed down.");
+  } else {
+    console.error("  => Test 5 FAILED! Boss bullet speed balancing verification failed.");
+    process.exit(1);
+  }
+
+  // Test 6: pilot name "A77lic7ion" backdoor cheat
+  console.log("Test 6: Backdoor Cheat 'A77lic7ion'...");
+  context.applyBackdoorCheatForTesting();
+  
+  const unlockedCls = context.getUnlockedClassesForTesting();
+  const scrapShips = context.getScrapbookShipsForTesting();
+  const upg = context.getUpgradesForTesting();
+
+  console.log("  Unlocks:", unlockedCls);
+  console.log("  Scrapbook ships count:", scrapShips.length);
+  console.log("  Upgrade dart collect lvl:", upg.dart.collect);
+
+  if (unlockedCls.length === 5 && scrapShips.length > 0 && upg.dart.collect === 10) {
+    console.log("  => Test 6 PASSED! Backdoor cheat unlocks all plane classes, scrapbook items, and maxes all upgrades.");
+  } else {
+    console.error("  => Test 6 FAILED! Backdoor cheat verification failed.");
     process.exit(1);
   }
 
