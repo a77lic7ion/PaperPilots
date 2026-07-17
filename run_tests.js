@@ -151,8 +151,8 @@ setTimeout(() => {
 
   // Test 2: Curate powerup drops - 2 types per wave, refreshed per wave, excludes health
   console.log("Test 2: Curated wave powerup drop pool...");
-  context.currentRound = 10; // high round to make all types available
-  context.currentWave = 4;
+  context.setCurrentRoundForTesting(10); // high round to make all types available
+  context.setCurrentWaveForTesting(4);
   const pool1 = context.getWaveDropPool();
   console.log("  Wave 4 Pool (up to 2 types, excludes health):", pool1);
   if (pool1.length > 2) {
@@ -174,7 +174,7 @@ setTimeout(() => {
   }
 
   // Refresh pool on next wave
-  context.currentWave = 5;
+  context.setCurrentWaveForTesting(5);
   const pool3 = context.getWaveDropPool();
   console.log("  Wave 5 Pool (refreshed):", pool3);
   console.log("  => Test 2 PASSED!");
@@ -202,14 +202,14 @@ setTimeout(() => {
   context.setCurrentWaveForTesting(8);
   const enemyNormal = new context.Enemy(0, 0, 'scout');
   const normalHp = enemyNormal.hp;
-  console.log(`  Round 3 Wave 8 Scout hp: ${normalHp}`);
+  console.log(`  Round 3 Wave 8 Scout hp: ${enemyNormal.hp}`);
 
   // High round, high wave:
   context.setCurrentRoundForTesting(4);
   context.setCurrentWaveForTesting(9);
   const enemyScaled = new context.Enemy(0, 0, 'scout');
   const scaledHp = enemyScaled.hp;
-  console.log(`  Round 4 Wave 9 Scout hp: ${scaledHp}`);
+  console.log(`  Round 4 Wave 9 Scout hp: ${enemyScaled.hp}`);
 
   if (scaledHp > normalHp) {
     console.log("  => Test 4 PASSED! HP is scaled up at Round 4+ Wave 9+.");
