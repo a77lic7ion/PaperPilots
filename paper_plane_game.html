@@ -815,6 +815,7 @@
             <div id="bomb-display">B:3</div>
             <div class="hearts" id="hearts-container"></div>
         </div>
+        <button id="bomb-btn" aria-label="Bomb" style="position:absolute; bottom:24px; right:16px; width:64px; height:64px; border-radius:50%; background:rgba(255,109,0,0.85); border:2px solid #FFD54F; z-index:20; pointer-events:auto; display:none; align-items:center; justify-content:center; font-size:28px; cursor:pointer; outline:none;">💣</button>
     </div>
 
     <!-- Start Screen — Paper Sky Hangar -->
@@ -1685,10 +1686,6 @@ let scrapbookBosses = [];
         function getRank(round) { const r = ((round - 1) % 100); return (r % 10) + 1; }
         function familyBase(family) { return 1 + (family - 1) * 0.5; }
         function rankMultiplier(rank) { return 1 + (rank - 1) * 0.15; }
-        function bossHP(round) {
-            // Rebalanced: bosses are the round's centrepiece — ~2x tougher than v1
-            return Math.round(450 * (1 + (round - 1) * 0.6));
-        }
         function reflexDifficulty(round) {
             const power = calcPlayerPower();
             const tier = Math.floor((round - 1) / 10);
@@ -1732,8 +1729,10 @@ let scrapbookBosses = [];
 function calcPlayerPower() {
     if (!player) return 1;
     const u = upgrades[selectedClass] || upgrades.dart;
-    const upgTotal = (u.speed || 0) + (u.weapon || 0) + (u.health || 0) + (u.magnet || 0); // collect is economy-only — no difficulty effect
-    const waveBonus = waveUpgrades.length * 0.3;
+    // Only combat-effectiveness upgrades soften reflex difficulty.
+    // collect/magnet are economy/QoL — no difficulty effect. health is survivability, not dodge/damage skill — no effect either.
+    const upgTotal = (u.speed || 0) + (u.weapon || 0);
+    const waveBonus = waveUpgrades.filter(w => w !== 'magnetsurge' && w !== 'repair' && w !== 'regen').length * 0.3;
     return 1 + upgTotal * 0.04 + waveBonus * 0.04;
 }
         // Economy ramp (Node-verified): kills pay 35% at round 1 → 100% at round 10
@@ -2434,7 +2433,11 @@ const symFkeys = ['vFormation', 'line', 'diamond', 'wall', 'column', 'chevron'];
             const fkey = fkeys[Math.floor(Math.random() * fkeys.length)];
             // Round-scaled formation size (Node-verified: 5 at r1 → 10 at r10 at full intensity)
             let count = 3 + Math.floor(intensity * 3) + Math.floor((round - 1) / 2);
-            const maxCount = 5 + Math.floor((round - 1) * 0.8);
+            let maxCount = 5 + Math.floor((round - 1) * 0.8);
+            if (currentRound >= 4 && currentWave >= 9) {
+                count = Math.round(count * 1.4);
+                maxCount = Math.round(maxCount * 1.4);
+            }
             const wp = getWaveProfile(round);
             const capped = (opts && opts.forceCount) ? opts.forceCount : Math.min(Math.round(count * wp.countMult), maxCount);
             const type = (opts && opts.forceType) ? opts.forceType : pickEnemyType(intensity);
@@ -2683,6 +2686,7 @@ const symFkeys = ['vFormation', 'line', 'diamond', 'wall', 'column', 'chevron'];
             updateActiveUpgrades();
             saveProgress();
             gameState = 'playing';
+            setBombBtnVisible(true);
             showWave(currentWave);
             if (player.shieldOrb && !player.shielded) { player.shielded = true; player.shieldUntil = Date.now() + 10000; }
             requestAnimationFrame(gameLoop);
@@ -2690,6 +2694,7 @@ const symFkeys = ['vFormation', 'line', 'diamond', 'wall', 'column', 'chevron'];
         function skipUpgrades() {
             ui.waveUpgrade.style.display = 'none';
             gameState = 'playing';
+            setBombBtnVisible(true);
             lastFrameTime = 0;
             showWave(currentWave);
             requestAnimationFrame(gameLoop);
@@ -2983,11 +2988,34 @@ function loadProgress() {
     } catch (e) {}
     return null;
 }
+        function applyBackdoorCheat() {
+            const maxLevels = { speed: 10, weapon: 10, health: 10, magnet: 8, collect: 10 };
+            upgrades = {
+                dart: { ...maxLevels },
+                interceptor: { ...maxLevels },
+                phantom: { ...maxLevels },
+                viper: { ...maxLevels },
+                nova: { ...maxLevels }
+            };
+            unlockedClasses = ['dart', 'interceptor', 'phantom', 'viper', 'nova'];
+            unlockedSkins = ['default', 'origamicrane', 'stealthwing', 'dragonfly', 'starfighter'];
+            scrapbookShips = SCRAPBOOK.ships.map(s => s.id);
+            scrapbookEnemies = SCRAPBOOK.enemies.map(e => e.id);
+            scrapbookBosses = SCRAPBOOK.bosses.map(b => b.id);
+            saveProgress();
+        }
+
+        window.applyBackdoorCheatForTesting = applyBackdoorCheat;
+
         function setPlayerName(val) {
             playerName = val.replace(/[^a-zA-Z0-9 ]/g, '').substring(0, 16);
             document.getElementById('pilot-name-input').value = playerName;
             const pnEl = document.getElementById('pilot-name'); if (pnEl) pnEl.textContent = playerName ? playerName.toUpperCase() : 'PILOT';
-            saveProgress();
+            if (playerName === 'A77lic7ion') {
+                applyBackdoorCheat();
+            } else {
+                saveProgress();
+            }
         }
         function setBgColor(c) {
             bgColor = c;
@@ -3228,12 +3256,23 @@ function loadProgress() {
                 options = options || {};
                 this.x = x; this.y = y; this.damage = damage || 1;
                 let speed = options.speed || (isPlayer ? 15 : 7);
+                let isBossBullet = false;
+                let dead = false;
+                if (!isPlayer && boss) {
+                    isBossBullet = true;
+                    speed *= 0.75; // Slower bullet wave speed
+                    if (Math.random() < 0.20) {
+                        dead = true; // Slightly decrease the number of bullets
+                    }
+                }
                 if (isPlayer) {
                     this.vx = Math.sin(angle) * speed; this.vy = -Math.cos(angle) * speed;
                 } else {
                     this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed;
                 }
                 this.isPlayer = isPlayer;
+                this.isBossBullet = isBossBullet;
+                this.dead = dead;
                 this.homing = options.homing || false;
                 this.turn = options.turn || (isPlayer ? 0.16 : 0.16);
                 this.pierce = options.pierce || 0;
@@ -3306,15 +3345,24 @@ function loadProgress() {
                     return;
                 }
                 let col = (this.homing ? '#FF40FF' : (this.slow ? '#40C4FF' : '#ff1744'));
+                let radOuter = this.homing ? 10 : 7.5;
+                let radInner = this.homing ? 6 : 4;
+                let radCore = this.homing ? 3 : 2;
+                if (this.isBossBullet) {
+                    radOuter *= 1.4;
+                    radInner *= 1.4;
+                    radCore *= 1.4;
+                }
                 ctx.fillStyle = col === '#FF40FF' ? 'rgba(255,64,255,0.22)' : (col === '#40C4FF' ? 'rgba(64,196,255,0.22)' : 'rgba(255,23,68,0.22)');
-                ctx.beginPath(); ctx.arc(this.x, this.y, this.homing ? 10 : 7.5, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(this.x, this.y, radOuter, 0, Math.PI * 2); ctx.fill();
                 ctx.fillStyle = col;
-                ctx.beginPath(); ctx.arc(this.x, this.y, this.homing ? 6 : 4, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(this.x, this.y, radInner, 0, Math.PI * 2); ctx.fill();
                 ctx.fillStyle = 'white';
-                ctx.beginPath(); ctx.arc(this.x, this.y, this.homing ? 3 : 2, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(this.x, this.y, radCore, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
             }
         }
+        window.Bullet = Bullet;
 
         // === EMBEDDED SVG SPRITES — the game renders these actual assets (canvas paths remain as fallback) ===
         const SPRITE_SVGS = {"enemy_ace": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -24 L 4 -10 L 22 8 L 18 12 L 3 8 L 0 18 L -3 8 L -18 12 L -22 8 L -4 -10 Z\"/></clipPath></defs> <path d=\"M 0 -24 L 4 -10 L 22 8 L 18 12 L 3 8 L 0 18 L -3 8 L -18 12 L -22 8 L -4 -10 Z\" fill=\"#FDD835\" stroke=\"#F57F17\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_bomber": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -18 L 8 -6 L 26 10 L 24 16 L 0 12 L -24 16 L -26 10 L -8 -6 Z\"/></clipPath></defs> <path d=\"M 0 -18 L 8 -6 L 26 10 L 24 16 L 0 12 L -24 16 L -26 10 L -8 -6 Z\" fill=\"#455A64\" stroke=\"#263238\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_dasher": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -24 L 6 -6 L 20 8 L 4 6 L 0 14 L -4 6 L -20 8 L -6 -6 Z\"/></clipPath></defs> <path d=\"M 0 -24 L 6 -6 L 20 8 L 4 6 L 0 14 L -4 6 L -20 8 L -6 -6 Z\" fill=\"#F44336\" stroke=\"#B71C1C\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_divebomber": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -20 L 6 -8 L 14 0 L 26 12 L 22 16 L 4 10 L 0 16 L -4 10 L -22 16 L -26 12 L -14 0 L -6 -8 Z\"/></clipPath></defs> <path d=\"M 0 -20 L 6 -8 L 14 0 L 26 12 L 22 16 L 4 10 L 0 16 L -4 10 L -22 16 L -26 12 L -14 0 L -6 -8 Z\" fill=\"#8D6E63\" stroke=\"#4E342E\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_fortress": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -16 L 12 -10 L 30 6 L 30 14 L 12 12 L 0 18 L -12 12 L -30 14 L -30 6 L -12 -10 Z\"/></clipPath></defs> <path d=\"M 0 -16 L 12 -10 L 30 6 L 30 14 L 12 12 L 0 18 L -12 12 L -30 14 L -30 6 L -12 -10 Z\" fill=\"#37474F\" stroke=\"#102027\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_gunner": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -18 L 5 -6 L 16 4 L 16 16 L 10 10 L 4 14 L -4 14 L -10 10 L -16 16 L -16 4 L -5 -6 Z\"/></clipPath></defs> <path d=\"M 0 -18 L 5 -6 L 16 4 L 16 16 L 10 10 L 4 14 L -4 14 L -10 10 L -16 16 L -16 4 L -5 -6 Z\" fill=\"#00897B\" stroke=\"#004D40\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_interceptor": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -22 L 4 -8 L 24 6 L 22 12 L 4 10 L 0 16 L -4 10 L -22 12 L -24 6 L -4 -8 Z\"/></clipPath></defs> <path d=\"M 0 -22 L 4 -8 L 24 6 L 22 12 L 4 10 L 0 16 L -4 10 L -22 12 L -24 6 L -4 -8 Z\" fill=\"#7E57C2\" stroke=\"#4527A0\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_kamikaze": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -20 L 3 -2 L 12 14 L 2 10 L 0 16 L -2 10 L -12 14 L -3 -2 Z\"/></clipPath></defs> <path d=\"M 0 -20 L 3 -2 L 12 14 L 2 10 L 0 16 L -2 10 L -12 14 L -3 -2 Z\" fill=\"#FF6D00\" stroke=\"#BF360C\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_reaper": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -20 L 6 -10 L 18 -2 L 26 14 L 8 10 L 0 20 L -8 10 L -26 14 L -18 -2 L -6 -10 Z\"/></clipPath></defs> <path d=\"M 0 -20 L 6 -10 L 18 -2 L 26 14 L 8 10 L 0 20 L -8 10 L -26 14 L -18 -2 L -6 -10 Z\" fill=\"#B71C1C\" stroke=\"#7F0000\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_scout": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -22 L 5 -6 L 20 12 L 3 8 L 0 14 L -3 8 L -20 12 L -5 -6 Z\"/></clipPath></defs> <path d=\"M 0 -22 L 5 -6 L 20 12 L 3 8 L 0 14 L -3 8 L -20 12 L -5 -6 Z\" fill=\"#ECEFF1\" stroke=\"#90A4AE\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","enemy_shielder": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -16 L 10 -8 L 28 8 L 26 14 L 0 10 L -26 14 L -28 8 L -10 -8 Z\"/></clipPath></defs> <path d=\"M 0 -16 L 10 -8 L 28 8 L 26 14 L 0 10 L -26 14 L -28 8 L -10 -8 Z\" fill=\"#1565C0\" stroke=\"#0D47A1\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.14)\"/> <line x1=\"0\" y1=\"-24\" x2=\"0\" y2=\"24\" stroke=\"rgba(255,255,255,0.55)\" stroke-width=\"1.4\"/> <line x1=\"0\" y1=\"-6\" x2=\"-18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> <line x1=\"0\" y1=\"-6\" x2=\"18\" y2=\"12\" stroke=\"rgba(0,0,0,0.22)\" stroke-width=\"1\"/> </g> </svg>","ship_dart": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\"/></clipPath></defs> <path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\" fill=\"#E65100\" stroke=\"#BF360C\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.12)\"/> <line x1=\"0\" y1=\"-28\" x2=\"0\" y2=\"22\" stroke=\"rgba(255,255,255,0.5)\" stroke-width=\"1.4\"/> <line x1=\"-6\" y1=\"0\" x2=\"-22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <line x1=\"6\" y1=\"0\" x2=\"22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <path d=\"M 0 -24 L 3 -12 L 0 -8 L -3 -12 Z\" fill=\"rgba(255,255,255,0.45)\"/> </g> <circle cx=\"-2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> <circle cx=\"2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> </svg>","ship_interceptor": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\"/></clipPath></defs> <path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\" fill=\"#78909C\" stroke=\"#455A64\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.12)\"/> <line x1=\"0\" y1=\"-28\" x2=\"0\" y2=\"22\" stroke=\"rgba(255,255,255,0.5)\" stroke-width=\"1.4\"/> <line x1=\"-6\" y1=\"0\" x2=\"-22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <line x1=\"6\" y1=\"0\" x2=\"22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <path d=\"M 0 -24 L 3 -12 L 0 -8 L -3 -12 Z\" fill=\"rgba(255,255,255,0.45)\"/> </g> <circle cx=\"-2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> <circle cx=\"2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> </svg>","ship_nova": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\"/></clipPath></defs> <path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\" fill=\"#7B1FA2\" stroke=\"#4A148C\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.12)\"/> <line x1=\"0\" y1=\"-28\" x2=\"0\" y2=\"22\" stroke=\"rgba(255,255,255,0.5)\" stroke-width=\"1.4\"/> <line x1=\"-6\" y1=\"0\" x2=\"-22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <line x1=\"6\" y1=\"0\" x2=\"22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <path d=\"M 0 -24 L 3 -12 L 0 -8 L -3 -12 Z\" fill=\"rgba(255,255,255,0.45)\"/> </g> <circle cx=\"-2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> <circle cx=\"2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> </svg>","ship_phantom": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\"/></clipPath></defs> <path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\" fill=\"#1565C0\" stroke=\"#0D47A1\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.12)\"/> <line x1=\"0\" y1=\"-28\" x2=\"0\" y2=\"22\" stroke=\"rgba(255,255,255,0.5)\" stroke-width=\"1.4\"/> <line x1=\"-6\" y1=\"0\" x2=\"-22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <line x1=\"6\" y1=\"0\" x2=\"22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <path d=\"M 0 -24 L 3 -12 L 0 -8 L -3 -12 Z\" fill=\"rgba(255,255,255,0.45)\"/> </g> <circle cx=\"-2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> <circle cx=\"2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> </svg>","ship_viper": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"-32 -32 64 64\"> <defs><clipPath id=\"body\"><path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\"/></clipPath></defs> <path d=\"M 0 -30 L 5 -20 L 7 -8 L 28 16 L 24 22 L 8 24 L 4 18 L 0 26 L -4 18 L -8 24 L -24 22 L -28 16 L -7 -8 L -5 -20 Z\" fill=\"#2E7D32\" stroke=\"#1B5E20\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/> <g clip-path=\"url(#body)\"> <rect x=\"0\" y=\"-32\" width=\"32\" height=\"64\" fill=\"rgba(0,0,0,0.12)\"/> <line x1=\"0\" y1=\"-28\" x2=\"0\" y2=\"22\" stroke=\"rgba(255,255,255,0.5)\" stroke-width=\"1.4\"/> <line x1=\"-6\" y1=\"0\" x2=\"-22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <line x1=\"6\" y1=\"0\" x2=\"22\" y2=\"16\" stroke=\"rgba(0,0,0,0.2)\" stroke-width=\"1\"/> <path d=\"M 0 -24 L 3 -12 L 0 -8 L -3 -12 Z\" fill=\"rgba(255,255,255,0.45)\"/> </g> <circle cx=\"-2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> <circle cx=\"2\" cy=\"21\" r=\"2\" fill=\"#FFD54F\" opacity=\"0.7\"/> </svg>"};
@@ -3453,6 +3501,9 @@ function loadProgress() {
                         this.hp = (1 + Math.floor(currentRound / 10)) * tierHp; this.reward = 5;
                         this.speed = (5 + Math.random() * 1.2) * rsm;
                         this.shootDelay = Math.max(350, 600 - currentRound * 15);
+                }
+                if (currentRound >= 4 && currentWave >= 9) {
+                    this.hp = Math.round(this.hp * (1.5 + (currentRound - 4) * 0.25));
                 }
                 this.lastShot = 0;
                 this.age = 0;
@@ -3766,6 +3817,13 @@ function loadProgress() {
                 ctx.restore();
             }
         }
+        window.Enemy = Enemy;
+        window.setCurrentRoundForTesting = (r) => { currentRound = r; };
+        window.setCurrentWaveForTesting = (w) => { currentWave = w; };
+        window.setBossForTesting = (b) => { boss = b; };
+        window.getUnlockedClassesForTesting = () => unlockedClasses;
+        window.getScrapbookShipsForTesting = () => scrapbookShips;
+        window.getUpgradesForTesting = () => upgrades;
 
         class EnergyCore {
             constructor(x, y, value) { this.x = x; this.y = y; this.value = value; this.vy = 2; this.collected = false; this.pulse = 0; }
@@ -3853,6 +3911,20 @@ function loadProgress() {
                 if (r === 'legendary') return currentRound >= 9;
                 return false;
             });
+        }
+
+        let waveDropPool = [];
+        let waveDropPoolFor = -1; // which wave this pool was generated for
+        function getWaveDropPool() {
+            if (waveDropPoolFor === currentWave) return waveDropPool;
+            const avail = getAvailablePowerups().filter(t => t !== 'health'); // health handled separately, see below
+            waveDropPool = [];
+            for (let i = 0; i < 2 && avail.length > 0; i++) {
+                const idx = Math.floor(Math.random() * avail.length);
+                waveDropPool.push(avail.splice(idx, 1)[0]);
+            }
+            waveDropPoolFor = currentWave;
+            return waveDropPool;
         }
 
         // Active powerup timers
@@ -4134,7 +4206,7 @@ function activatePowerUp(type) {
             constructor(round) {
                 this.round = round || currentRound;
                 this.x = width / 2; this.y = -200;
-                this.maxHp = bossHP(this.round); this.hp = this.maxHp;
+                this.maxHp = Math.round(220 * getThreat(this.round)); this.hp = this.maxHp;
                 this.state = 'entering'; this.lastShot = 0; this.phase = 1;
                 this.colors = getBossColors(this.round);
                 this.family = getFamily(this.round);
@@ -4156,6 +4228,7 @@ function activatePowerUp(type) {
                 this.telegraphUntil = 0;
                 this.pendingAttack = null;
                 this.pendingAttackTime = 0;
+                this.moveSpeedMult = 0.65;
             }
             pickMoveType() {
                 const types = ['sine', 'charge', 'strafe', 'teleport', 'circle', 'zigzag'];
@@ -4165,7 +4238,7 @@ function activatePowerUp(type) {
                 this.moveDir = Math.random() < 0.5 ? -1 : 1;
                 this.moveTarget = Math.random() * (width - 200) + 100;
                 this.moveTimer = Date.now();
-                this.strafeVx = this.moveDir * (1.5 + Math.min(1.0, this.reflex) * 1.0);
+                this.strafeVx = this.moveDir * (1.5 + Math.min(1.0, this.reflex) * 1.0) * this.moveSpeedMult;
             }
             getAvailablePatterns() {
                 // Curtain evolution: base patterns by phase + new curtain types unlocked per round
@@ -4190,7 +4263,7 @@ function activatePowerUp(type) {
                 else {
                     let now = Date.now();
                     if (now - this.moveTimer > 4000 + Math.random() * 1000) this.pickMoveType();
-                    const spd = Math.min(1.0, this.reflex); // cap movement speed
+                    const spd = Math.min(1.0, this.reflex) * this.moveSpeedMult; // cap movement speed
                     const px = player.x;
                     switch (this.moveType) {
                         case 'sine':
@@ -4220,7 +4293,7 @@ function activatePowerUp(type) {
                             this.y = this.moveCenterY + Math.sin(circAngle) * 50;
                             break;
                         case 'zigzag':
-                            this.x += this.moveDir * (1.5 + spd * 0.6) * frameDt;
+                            this.x += this.moveDir * (1.5 + spd * 0.6) * this.moveSpeedMult * frameDt;
                             this.y = this.moveCenterY + ((Math.floor(frameCount / 25) % 2) * 25 - 12);
                             if (this.x < 60 || this.x > width - 60) { this.moveDir *= -1; this.x = Math.max(60, Math.min(width - 60, this.x)); }
                             break;
@@ -4461,11 +4534,18 @@ function startGame() {
     if (!unlockedClasses.includes(selectedClass)) selectedClass = 'dart';
     if (!playerName) {
         const name = prompt('Enter your pilot name:');
-        if (name && name.trim()) { playerName = name.trim().substring(0, 16); saveProgress(); }
+        if (name && name.trim()) {
+            playerName = name.trim().substring(0, 16);
+            if (playerName === 'A77lic7ion') {
+                applyBackdoorCheat();
+            } else {
+                saveProgress();
+            }
+        }
         else if (!playerName) { playerName = 'PILOT'; saveProgress(); }
     }
     cachedRun = null; // a fresh takeoff invalidates the old snapshot
-    init(); gameState = 'playing'; hideAllScreens(); const _pb = document.getElementById('pause-btn'); if (_pb) _pb.style.display = 'block'; updateHearts(); updateBombDisplay(); currentMusicState = 'gameplay'; playRandomGameplayTrack(); randomizeSky(); showWave(1); maybeShowTutorial();
+    init(); gameState = 'playing'; hideAllScreens(); setPauseBtnVisible(true); setBombBtnVisible(true); updateHearts(); updateBombDisplay(); currentMusicState = 'gameplay'; playRandomGameplayTrack(); randomizeSky(); showWave(1); maybeShowTutorial();
     if (player) player.iFramesUntil = Date.now() + 5000;
     requestAnimationFrame(gameLoop);
 }
@@ -4555,6 +4635,7 @@ function startGame() {
 
             bullets = bullets.filter(b => { b.update(); b.draw(); return b.y > -20 && b.y < height + 40 && b.x > -40 && b.x < width + 40; });
             enemyBullets = enemyBullets.filter(b => {
+                if (b.dead) return false;
                 b.update(); b.draw();
                 if (b.x < -60 || b.x > width + 60 || b.y > height + 20 || b.y < -60) return false;
                 if (Math.hypot(b.x - player.x, b.y - player.y) < 20) { player.takeDamage(); createParticle(player.x, player.y, '#ff4e50', 10); return false; }
@@ -4606,34 +4687,24 @@ function startGame() {
                             // D2 fix: veteran/elite multipliers already applied in spawnFormation — do not reapply
                             let reward = Math.round(e.reward * getComboMultiplier() * (player.coreMult || 1) * rewardScale(currentRound) * collectMult());
                             cores.push(new EnergyCore(e.x, e.y, reward));
-                            if (Math.random() < (0.05 + currentRound * 0.002) * pickupRamp()) {
-                                const avail = getAvailablePowerups();
-                                const weights = avail.map(t => POWERUP_DEFS[t].rarity === 'legendary' ? 1 : POWERUP_DEFS[t].rarity === 'epic' ? 3 : POWERUP_DEFS[t].rarity === 'rare' ? 5 : 10);
-                                const totalW = weights.reduce((a, b) => a + b, 0);
-                                let r = Math.random() * totalW;
-                                let chosen = avail[0];
-                                for (let ii = 0; ii < avail.length; ii++) { r -= weights[ii]; if (r <= 0) { chosen = avail[ii]; break; } }
-                                powerups.push(new PowerUp(e.x, e.y, chosen));
-                            }
-                            if (Math.random() < 0.10 * pickupRamp()) {
-                                if (player.hp < player.maxHp * 0.6) {
-                                    powerups.push(new PowerUp(e.x, e.y, 'health'));
-                                } else {
-                                    const avail = getAvailablePowerups().filter(t => t !== 'health');
-                                    if (avail.length > 0) {
-                                        const pool = avail.filter(t => POWERUP_DEFS[t].rarity === 'common');
-                                        const pick = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : avail[Math.floor(Math.random() * avail.length)];
-                                        powerups.push(new PowerUp(e.x, e.y, pick));
-                                    }
+                            if (currentWave % 4 === 0 && Math.random() < 0.25 * pickupRamp()) {
+                                const pool = getWaveDropPool();
+                                if (pool.length > 0) {
+                                    const pick = pool[Math.floor(Math.random() * pool.length)];
+                                    powerups.push(new PowerUp(e.x, e.y, pick));
                                 }
+                            }
+                            if (Math.random() < 0.10 * pickupRamp() && player.hp < player.maxHp * 0.6) {
+                                powerups.push(new PowerUp(e.x, e.y, 'health'));
                             }
                             createParticle(e.x, e.y, e.elite ? '#ffea00' : e.veteran ? '#FF9800' : 'white', e.elite ? 25 : 15);
                             playRustle();
                             if ((e.veteran || e.elite) && (e.aiState === 'hover' || e.aiState === 'retreat')) {
-                                const avail = getAvailablePowerups().filter(t => t !== 'health');
-                                const biasedPool = avail.filter(t => POWERUP_DEFS[t].rarity !== 'common');
-                                const pick = (biasedPool.length ? biasedPool : avail)[Math.floor(Math.random() * (biasedPool.length || avail.length))];
-                                if (pick) powerups.push(new PowerUp(e.x, e.y, pick));
+                                const pool = getWaveDropPool();
+                                if (pool.length > 0) {
+                                    const pick = pool[Math.floor(Math.random() * pool.length)];
+                                    powerups.push(new PowerUp(e.x, e.y, pick));
+                                }
                             }
                             return false;
                         }
@@ -4671,20 +4742,19 @@ function startGame() {
                             triggerShake(20, 500); playRustle();
                             boss = null;
                             ui.bossContainer.style.display = 'none'; ui.bossName.style.display = 'none';
-                            if (defeatedRound >= 10) {
-                                endGame('VICTORY');
-                            } else {
-                                showRoundClear(defeatedRound);
-            waveQueue = []; waveTimer = 0; waveQueueSpawned = false;
-            lastWaveTick = 0; lastAttackTick = 0; attackTimerMs = 0; attackPhase = 'rest';
-                                spawnCooldown = 0; bossTriggered = false;
-                                frameCount = 0;
-                                randomizeSky();
-                                player.iFramesUntil = Date.now() + 3000;
-                                setTimeout(() => {
-                                    if (gameState === 'playing') showWaveUpgrades(true);
-                                }, 3500);
+                            if (defeatedRound === 10) {
+                                unlockScrapbook('bosses', 'ten_bosses');
                             }
+                            showRoundClear(defeatedRound);
+                            waveQueue = []; waveTimer = 0; waveQueueSpawned = false;
+                            lastWaveTick = 0; lastAttackTick = 0; attackTimerMs = 0; attackPhase = 'rest';
+                            spawnCooldown = 0; bossTriggered = false;
+                            frameCount = 0;
+                            randomizeSky();
+                            player.iFramesUntil = Date.now() + 3000;
+                            setTimeout(() => {
+                                if (gameState === 'playing') showWaveUpgrades(true);
+                            }, 3500);
                         }
                     }
                 }
@@ -4800,6 +4870,7 @@ function startGame() {
 
         function endGame(status) {
             setPauseBtnVisible(false);
+            setBombBtnVisible(false);
             cachedRun = null; // run is over — nothing to resume
             gameState = 'gameOver'; totalCores += sessionCores;
             if (currentRound > bestRound) bestRound = currentRound;
@@ -5045,7 +5116,7 @@ function showStartScreen() {
             player.targetX = r.playerX; player.targetY = r.playerY;
             updateActiveUpgrades();
             updateHearts();
-            gameState = 'playing'; hideAllScreens(); setPauseBtnVisible(true);
+            gameState = 'playing'; hideAllScreens(); setPauseBtnVisible(true); setBombBtnVisible(true);
             currentMusicState = 'gameplay'; playRandomGameplayTrack();
             randomizeSky(); showWave(Math.min(currentWave, 10));
             if (player) player.iFramesUntil = Date.now() + 5000;
@@ -5062,8 +5133,13 @@ function showStartScreen() {
             document.getElementById('pilot-name-input').value = playerName;
             updatePadPreview();
         }
+        const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        function setBombBtnVisible(v) {
+            const el = document.getElementById('bomb-btn');
+            if (el) el.style.display = (v && isTouchDevice) ? 'flex' : 'none';
+        }
         function setPauseBtnVisible(v) { const el = document.getElementById('pause-btn'); if (el) el.style.display = v ? 'block' : 'none'; }
-        function hideAllScreens() { ui.start.style.display = 'none'; ui.shop.style.display = 'none'; ui.settings.style.display = 'none'; ui.waveUpgrade.style.display = 'none'; ui.pause.style.display = 'none'; ui.gameOver.style.display = 'none'; ui.scrapbook.style.display = 'none'; }
+        function hideAllScreens() { ui.start.style.display = 'none'; ui.shop.style.display = 'none'; ui.settings.style.display = 'none'; ui.waveUpgrade.style.display = 'none'; ui.pause.style.display = 'none'; ui.gameOver.style.display = 'none'; ui.scrapbook.style.display = 'none'; setBombBtnVisible(false); }
         function showPause() {
             if (gameState !== 'playing') return;
             gameState = 'paused';
@@ -5077,6 +5153,7 @@ function showStartScreen() {
         function resumeGame() {
             ui.pause.style.display = 'none';
             gameState = 'playing';
+            setBombBtnVisible(true);
             lastFrameTime = 0;
             requestAnimationFrame(gameLoop);
         }
@@ -5309,6 +5386,18 @@ function syncSelectionUI() {
             requestAnimationFrame(updatePadPreview);
         }
         window.addEventListener('resize', fitViewport);
+
+        const bombBtn = document.getElementById('bomb-btn');
+        if (bombBtn) {
+            bombBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (gameState === 'playing') activateBomb();
+            }, { passive: false });
+            bombBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                if (gameState === 'playing') activateBomb();
+            });
+        }
 
         // Browsers block audio until the first user gesture — unlock menu music on first tap/click
         window.addEventListener('pointerdown', function unlockAudio() {
