@@ -815,6 +815,7 @@
             <div id="bomb-display">B:3</div>
             <div class="hearts" id="hearts-container"></div>
         </div>
+        <button id="bomb-btn" aria-label="Bomb" style="position:absolute; bottom:24px; right:16px; width:64px; height:64px; border-radius:50%; background:rgba(255,109,0,0.85); border:2px solid #FFD54F; z-index:20; pointer-events:auto; display:none; align-items:center; justify-content:center; font-size:28px; cursor:pointer; outline:none;">💣</button>
     </div>
 
     <!-- Start Screen — Paper Sky Hangar -->
@@ -1685,10 +1686,6 @@ let scrapbookBosses = [];
         function getRank(round) { const r = ((round - 1) % 100); return (r % 10) + 1; }
         function familyBase(family) { return 1 + (family - 1) * 0.5; }
         function rankMultiplier(rank) { return 1 + (rank - 1) * 0.15; }
-        function bossHP(round) {
-            // Rebalanced: bosses are the round's centrepiece — ~2x tougher than v1
-            return Math.round(450 * (1 + (round - 1) * 0.6));
-        }
         function reflexDifficulty(round) {
             const power = calcPlayerPower();
             const tier = Math.floor((round - 1) / 10);
@@ -1732,8 +1729,10 @@ let scrapbookBosses = [];
 function calcPlayerPower() {
     if (!player) return 1;
     const u = upgrades[selectedClass] || upgrades.dart;
-    const upgTotal = (u.speed || 0) + (u.weapon || 0) + (u.health || 0) + (u.magnet || 0); // collect is economy-only — no difficulty effect
-    const waveBonus = waveUpgrades.length * 0.3;
+    // Only combat-effectiveness upgrades soften reflex difficulty.
+    // collect/magnet are economy/QoL — no difficulty effect. health is survivability, not dodge/damage skill — no effect either.
+    const upgTotal = (u.speed || 0) + (u.weapon || 0);
+    const waveBonus = waveUpgrades.filter(w => w !== 'magnetsurge' && w !== 'repair' && w !== 'regen').length * 0.3;
     return 1 + upgTotal * 0.04 + waveBonus * 0.04;
 }
         // Economy ramp (Node-verified): kills pay 35% at round 1 → 100% at round 10
@@ -2683,6 +2682,7 @@ const symFkeys = ['vFormation', 'line', 'diamond', 'wall', 'column', 'chevron'];
             updateActiveUpgrades();
             saveProgress();
             gameState = 'playing';
+            setBombBtnVisible(true);
             showWave(currentWave);
             if (player.shieldOrb && !player.shielded) { player.shielded = true; player.shieldUntil = Date.now() + 10000; }
             requestAnimationFrame(gameLoop);
@@ -2690,6 +2690,7 @@ const symFkeys = ['vFormation', 'line', 'diamond', 'wall', 'column', 'chevron'];
         function skipUpgrades() {
             ui.waveUpgrade.style.display = 'none';
             gameState = 'playing';
+            setBombBtnVisible(true);
             lastFrameTime = 0;
             showWave(currentWave);
             requestAnimationFrame(gameLoop);
@@ -3855,6 +3856,20 @@ function loadProgress() {
             });
         }
 
+        let waveDropPool = [];
+        let waveDropPoolFor = -1; // which wave this pool was generated for
+        function getWaveDropPool() {
+            if (waveDropPoolFor === currentWave) return waveDropPool;
+            const avail = getAvailablePowerups().filter(t => t !== 'health'); // health handled separately, see below
+            waveDropPool = [];
+            for (let i = 0; i < 2 && avail.length > 0; i++) {
+                const idx = Math.floor(Math.random() * avail.length);
+                waveDropPool.push(avail.splice(idx, 1)[0]);
+            }
+            waveDropPoolFor = currentWave;
+            return waveDropPool;
+        }
+
         // Active powerup timers
         let droneUntil = 0, droneBullets = [];
         let chainShots = 0;
@@ -4134,7 +4149,7 @@ function activatePowerUp(type) {
             constructor(round) {
                 this.round = round || currentRound;
                 this.x = width / 2; this.y = -200;
-                this.maxHp = bossHP(this.round); this.hp = this.maxHp;
+                this.maxHp = Math.round(220 * getThreat(this.round)); this.hp = this.maxHp;
                 this.state = 'entering'; this.lastShot = 0; this.phase = 1;
                 this.colors = getBossColors(this.round);
                 this.family = getFamily(this.round);
@@ -4465,7 +4480,7 @@ function startGame() {
         else if (!playerName) { playerName = 'PILOT'; saveProgress(); }
     }
     cachedRun = null; // a fresh takeoff invalidates the old snapshot
-    init(); gameState = 'playing'; hideAllScreens(); const _pb = document.getElementById('pause-btn'); if (_pb) _pb.style.display = 'block'; updateHearts(); updateBombDisplay(); currentMusicState = 'gameplay'; playRandomGameplayTrack(); randomizeSky(); showWave(1); maybeShowTutorial();
+    init(); gameState = 'playing'; hideAllScreens(); setPauseBtnVisible(true); setBombBtnVisible(true); updateHearts(); updateBombDisplay(); currentMusicState = 'gameplay'; playRandomGameplayTrack(); randomizeSky(); showWave(1); maybeShowTutorial();
     if (player) player.iFramesUntil = Date.now() + 5000;
     requestAnimationFrame(gameLoop);
 }
@@ -4606,34 +4621,24 @@ function startGame() {
                             // D2 fix: veteran/elite multipliers already applied in spawnFormation — do not reapply
                             let reward = Math.round(e.reward * getComboMultiplier() * (player.coreMult || 1) * rewardScale(currentRound) * collectMult());
                             cores.push(new EnergyCore(e.x, e.y, reward));
-                            if (Math.random() < (0.05 + currentRound * 0.002) * pickupRamp()) {
-                                const avail = getAvailablePowerups();
-                                const weights = avail.map(t => POWERUP_DEFS[t].rarity === 'legendary' ? 1 : POWERUP_DEFS[t].rarity === 'epic' ? 3 : POWERUP_DEFS[t].rarity === 'rare' ? 5 : 10);
-                                const totalW = weights.reduce((a, b) => a + b, 0);
-                                let r = Math.random() * totalW;
-                                let chosen = avail[0];
-                                for (let ii = 0; ii < avail.length; ii++) { r -= weights[ii]; if (r <= 0) { chosen = avail[ii]; break; } }
-                                powerups.push(new PowerUp(e.x, e.y, chosen));
-                            }
-                            if (Math.random() < 0.10 * pickupRamp()) {
-                                if (player.hp < player.maxHp * 0.6) {
-                                    powerups.push(new PowerUp(e.x, e.y, 'health'));
-                                } else {
-                                    const avail = getAvailablePowerups().filter(t => t !== 'health');
-                                    if (avail.length > 0) {
-                                        const pool = avail.filter(t => POWERUP_DEFS[t].rarity === 'common');
-                                        const pick = pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : avail[Math.floor(Math.random() * avail.length)];
-                                        powerups.push(new PowerUp(e.x, e.y, pick));
-                                    }
+                            if (currentWave % 4 === 0 && Math.random() < 0.25 * pickupRamp()) {
+                                const pool = getWaveDropPool();
+                                if (pool.length > 0) {
+                                    const pick = pool[Math.floor(Math.random() * pool.length)];
+                                    powerups.push(new PowerUp(e.x, e.y, pick));
                                 }
+                            }
+                            if (Math.random() < 0.10 * pickupRamp() && player.hp < player.maxHp * 0.6) {
+                                powerups.push(new PowerUp(e.x, e.y, 'health'));
                             }
                             createParticle(e.x, e.y, e.elite ? '#ffea00' : e.veteran ? '#FF9800' : 'white', e.elite ? 25 : 15);
                             playRustle();
                             if ((e.veteran || e.elite) && (e.aiState === 'hover' || e.aiState === 'retreat')) {
-                                const avail = getAvailablePowerups().filter(t => t !== 'health');
-                                const biasedPool = avail.filter(t => POWERUP_DEFS[t].rarity !== 'common');
-                                const pick = (biasedPool.length ? biasedPool : avail)[Math.floor(Math.random() * (biasedPool.length || avail.length))];
-                                if (pick) powerups.push(new PowerUp(e.x, e.y, pick));
+                                const pool = getWaveDropPool();
+                                if (pool.length > 0) {
+                                    const pick = pool[Math.floor(Math.random() * pool.length)];
+                                    powerups.push(new PowerUp(e.x, e.y, pick));
+                                }
                             }
                             return false;
                         }
@@ -4671,20 +4676,19 @@ function startGame() {
                             triggerShake(20, 500); playRustle();
                             boss = null;
                             ui.bossContainer.style.display = 'none'; ui.bossName.style.display = 'none';
-                            if (defeatedRound >= 10) {
-                                endGame('VICTORY');
-                            } else {
-                                showRoundClear(defeatedRound);
-            waveQueue = []; waveTimer = 0; waveQueueSpawned = false;
-            lastWaveTick = 0; lastAttackTick = 0; attackTimerMs = 0; attackPhase = 'rest';
-                                spawnCooldown = 0; bossTriggered = false;
-                                frameCount = 0;
-                                randomizeSky();
-                                player.iFramesUntil = Date.now() + 3000;
-                                setTimeout(() => {
-                                    if (gameState === 'playing') showWaveUpgrades(true);
-                                }, 3500);
+                            if (defeatedRound === 10) {
+                                unlockScrapbook('bosses', 'ten_bosses');
                             }
+                            showRoundClear(defeatedRound);
+                            waveQueue = []; waveTimer = 0; waveQueueSpawned = false;
+                            lastWaveTick = 0; lastAttackTick = 0; attackTimerMs = 0; attackPhase = 'rest';
+                            spawnCooldown = 0; bossTriggered = false;
+                            frameCount = 0;
+                            randomizeSky();
+                            player.iFramesUntil = Date.now() + 3000;
+                            setTimeout(() => {
+                                if (gameState === 'playing') showWaveUpgrades(true);
+                            }, 3500);
                         }
                     }
                 }
@@ -4800,6 +4804,7 @@ function startGame() {
 
         function endGame(status) {
             setPauseBtnVisible(false);
+            setBombBtnVisible(false);
             cachedRun = null; // run is over — nothing to resume
             gameState = 'gameOver'; totalCores += sessionCores;
             if (currentRound > bestRound) bestRound = currentRound;
@@ -5045,7 +5050,7 @@ function showStartScreen() {
             player.targetX = r.playerX; player.targetY = r.playerY;
             updateActiveUpgrades();
             updateHearts();
-            gameState = 'playing'; hideAllScreens(); setPauseBtnVisible(true);
+            gameState = 'playing'; hideAllScreens(); setPauseBtnVisible(true); setBombBtnVisible(true);
             currentMusicState = 'gameplay'; playRandomGameplayTrack();
             randomizeSky(); showWave(Math.min(currentWave, 10));
             if (player) player.iFramesUntil = Date.now() + 5000;
@@ -5062,8 +5067,13 @@ function showStartScreen() {
             document.getElementById('pilot-name-input').value = playerName;
             updatePadPreview();
         }
+        const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        function setBombBtnVisible(v) {
+            const el = document.getElementById('bomb-btn');
+            if (el) el.style.display = (v && isTouchDevice) ? 'flex' : 'none';
+        }
         function setPauseBtnVisible(v) { const el = document.getElementById('pause-btn'); if (el) el.style.display = v ? 'block' : 'none'; }
-        function hideAllScreens() { ui.start.style.display = 'none'; ui.shop.style.display = 'none'; ui.settings.style.display = 'none'; ui.waveUpgrade.style.display = 'none'; ui.pause.style.display = 'none'; ui.gameOver.style.display = 'none'; ui.scrapbook.style.display = 'none'; }
+        function hideAllScreens() { ui.start.style.display = 'none'; ui.shop.style.display = 'none'; ui.settings.style.display = 'none'; ui.waveUpgrade.style.display = 'none'; ui.pause.style.display = 'none'; ui.gameOver.style.display = 'none'; ui.scrapbook.style.display = 'none'; setBombBtnVisible(false); }
         function showPause() {
             if (gameState !== 'playing') return;
             gameState = 'paused';
@@ -5077,6 +5087,7 @@ function showStartScreen() {
         function resumeGame() {
             ui.pause.style.display = 'none';
             gameState = 'playing';
+            setBombBtnVisible(true);
             lastFrameTime = 0;
             requestAnimationFrame(gameLoop);
         }
@@ -5309,6 +5320,18 @@ function syncSelectionUI() {
             requestAnimationFrame(updatePadPreview);
         }
         window.addEventListener('resize', fitViewport);
+
+        const bombBtn = document.getElementById('bomb-btn');
+        if (bombBtn) {
+            bombBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (gameState === 'playing') activateBomb();
+            }, { passive: false });
+            bombBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                if (gameState === 'playing') activateBomb();
+            });
+        }
 
         // Browsers block audio until the first user gesture — unlock menu music on first tap/click
         window.addEventListener('pointerdown', function unlockAudio() {
